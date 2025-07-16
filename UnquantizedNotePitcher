@@ -1,0 +1,89 @@
+// Unquantized Note Pitcher for Logic Pro X MIDI Scripter Effect Plugin
+// Maps MIDI keyboard input to control pitch bend, locking notes to a root note
+ 
+var MIDI = {
+  NOTE_MIN: 36, // Minimum note for UA MiniMoog, default MIDI min value is 0
+  NOTE_MAX: 96, // Maximum note for UA MiniMoog, default MIDI max value is 127
+  PITCH_BEND_MIN: -8192, // MIDI pitch bend range 14bit (negative)
+  PITCH_BEND_MAX: 8191, // MIDI pitch bend range 14bit (positive)
+  NOTE_RANGE: 127 // Standard MIDI note range 0~127
+};
+
+// Handle MIDI events
+function HandleMIDI(event) {
+  // Get UI parameters
+  var rootNote = GetParameter("Root Note");
+  var pitchRange = GetParameter("Pitch Range");
+  var pitchBendRange = pitchRange * MIDI.PITCH_BEND_MAX;
+
+  // Validate root note
+  var clampedRootNote = Math.max(MIDI.NOTE_MIN, Math.min(MIDI.NOTE_MAX, rootNote));
+
+  if (event instanceof NoteOn) {
+    // Store original pitch and transpose to root note
+    var originalPitch = event.pitch;
+
+    // Calculate and send pitch bend *before* NoteOn to minimize delay
+    var pitchBendValue = calculatePitchBend(originalPitch, pitchBendRange);
+    var pitchBend = new PitchBend();
+    pitchBend.value = pitchBendValue;
+    pitchBend.send(); // Send PitchBend first
+
+    // Send modified NoteOn
+    event.pitch = clampedRootNote;
+    event.send();
+
+    // Log for debugging (should be disabled in normal operation)
+    if (GetParameter("Debug Mode")) {
+      Trace(`Original Pitch: ${originalPitch} | Root Note: ${clampedRootNote} | Bend Value: ${pitchBendValue}`);
+    }
+  } else if (event instanceof NoteOff) {
+    // Send NoteOff with transposed pitch
+    event.pitch = clampedRootNote;
+    event.send();
+
+    // Reset pitch bend to 0 on NoteOff to prevent lingering weirdness
+    var resetPitchBend = new PitchBend();
+    resetPitchBend.value = 0;
+    resetPitchBend.send();
+  } else {
+    // Pass through all other MIDI events unchanged
+    event.send();
+  }
+}
+
+// Calculate pitch bend value based on original incoming note pitch
+function calculatePitchBend(originalPitch, pitchBendRange) {
+  // Ensure original pitch is within valid MIDI range
+  var clampedPitch = Math.max(0, Math.min(MIDI.NOTE_RANGE, originalPitch));
+  // Linearly map pitch to bend range
+  return Math.round((clampedPitch / MIDI.NOTE_RANGE) * pitchBendRange);
+}
+
+// Parameters visible in the plugin UI
+var PluginParameters = [
+  {
+    name: "Root Note",
+    type: "lin",
+    minValue: MIDI.NOTE_MIN, // 36 (C2 for MiniMoog)
+    maxValue: MIDI.NOTE_MAX, // 96 (C7 for MiniMoog)
+    numberOfSteps: MIDI.NOTE_MAX - MIDI.NOTE_MIN, // 60 steps
+    defaultValue: 60, // Middle C (C4)
+    unit: "MIDI Note"
+  },
+  {
+    name: "Pitch Range",
+    type: "lin",
+    minValue: 0,
+    maxValue: 1,
+    numberOfSteps: 1000, // Higher resolution for smoother control
+    defaultValue: 0.5,
+    unit: "Ratio"
+  },
+  {
+    name: "Debug Mode",
+    type: "menu",
+    valueStrings: ["Off", "On"],
+    defaultValue: 0 // Off by default
+  }
+];
